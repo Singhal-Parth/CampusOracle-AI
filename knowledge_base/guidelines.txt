@@ -1,0 +1,67 @@
+================================================================================
+               ACADEMIC GUIDELINES — OFFICIAL DOCUMENT
+================================================================================
+
+1. ACADEMIC PERFORMANCE STANDARDS
+---------------------------------
+- Students are expected to maintain a minimum CGPA of 5.0 (on 10-point scale).
+- Students falling below CGPA 5.0 for two consecutive semesters will be
+  placed on academic probation.
+- Students on academic probation must attend mandatory counselling sessions.
+
+2. REMEDIAL CLASSES
+-------------------
+- Remedial classes are offered for students scoring below 50% in any subject.
+- Schedule: Extra classes held on Saturdays, 10 AM — 1 PM.
+- Attendance in remedial classes is mandatory for eligible students.
+- Topics covered: Fundamentals review, problem-solving workshops, and
+  doubt-clearing sessions.
+- Faculty mentors are assigned to each weak student for personalized guidance.
+
+3. IMPROVEMENT EXAMINATIONS
+----------------------------
+- Students who have passed but wish to improve their grades may appear for
+  improvement exams in the subsequent semester.
+- Maximum of 3 subjects can be attempted for improvement per semester.
+- The better of the two scores (original or improvement) will be considered.
+- Fee for improvement exam: Rs. 500 per subject.
+
+4. WEAK STUDENT IDENTIFICATION CRITERIA
+----------------------------------------
+- A student is classified as "academically weak" if:
+  * Average marks across all subjects < 50%, OR
+  * Attendance percentage < 60%, OR
+  * Failed in 2 or more subjects in a single semester.
+- Interventions for weak students:
+  * Mandatory remedial classes
+  * Bi-weekly mentor meetings
+  * Peer tutoring program (pairing with high performers)
+  * Progress tracking with monthly reports to parents/guardians
+
+5. SUGGESTIONS FOR IMPROVEMENT
+-------------------------------
+- Regular study schedule: Minimum 2 hours of self-study daily.
+- Active participation in class discussions and group projects.
+- Utilize college resources: library, online databases, lab facilities.
+- Seek help early: approach faculty during office hours for doubts.
+- Form study groups with classmates for collaborative learning.
+- Practice previous years' question papers for exam preparation.
+- Maintain a healthy work-life balance: exercise, sleep, nutrition.
+
+6. BRANCH-SPECIFIC GUIDELINES
+------------------------------
+- CSE: Focus on programming practice (minimum 2 coding problems/day).
+  Participate in hackathons and open-source contributions.
+- ECE: Emphasize lab work and circuit design projects. Join electronics
+  clubs for hands-on experience.
+- ME: Focus on workshop skills and CAD software proficiency. Participate
+  in design competitions and internships.
+- CE: Emphasize site visits and practical knowledge. Study building codes
+  and structural analysis thoroughly.
+
+7. MENTORSHIP PROGRAM
+---------------------
+- Every student is assigned a faculty mentor at the start of each year.
+- Mentor meetings: At least once per month (mandatory).
+- Mentors track academic progress, attendance, and overall well-being.
+- Students can request a change of mentor through the Dean's office.
