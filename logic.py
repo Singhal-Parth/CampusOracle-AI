@@ -4,7 +4,7 @@ logic.py -- Context Engine + Decision Engine + LLM Integration
 This module is the brain of the AI College Data Assistant. It contains:
   1. Context Engine  -- manages user role & session memory (last 3 queries)
   2. Decision Engine  -- classifies queries and routes to the right handler
-  3. LLM Integration  -- Routes through LLMRouter (OpenAI / Ollama / fallback)
+  3. LLM Integration  -- Request-local OpenAI / Gemini / Ollama / offline routing
   4. RAG Simulation   -- keyword-based document retrieval from static files
 
 Flow: User Query -> Context Engine -> Decision Engine -> Response
@@ -20,15 +20,6 @@ from llm_router import get_router, LLMRouter  # Intelligent LLM routing
 
 # Load environment variables
 load_dotenv()
-
-# ---------------------------------------------------------------------------
-# LLM Router (replaces direct OpenAI client)
-# ---------------------------------------------------------------------------
-# The router manages OpenAI + Ollama connections, token counting,
-# and automatic provider selection.  See llm_router.py for details.
-
-llm_router: LLMRouter = get_router()
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1. CONTEXT ENGINE
@@ -82,8 +73,6 @@ class ContextEngine:
         return self.session_memory.copy()
 
 
-# Global context engine instance (shared across requests in a session)
-context_engine = ContextEngine()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -216,7 +205,7 @@ def handle_data_query(query: str) -> dict:
     }
 
 
-def handle_analytical_query(query: str) -> dict:
+def handle_analytical_query(query: str, context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
     """
     Handle analytical queries that require deeper insights.
     Routes through LLMRouter; falls back to rule-based analysis if no LLM available.
@@ -245,10 +234,10 @@ def handle_analytical_query(query: str) -> dict:
         data_context = "All students data"
 
     # Route through LLM router -- it decides provider automatically
-    return _llm_analysis(query, data, data_context)
+    return _llm_analysis(query, data, data_context, context_engine, llm_router)
 
 
-def handle_knowledge_query(query: str) -> dict:
+def handle_knowledge_query(query: str, context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
     """
     Handle knowledge queries using RAG simulation.
     Searches static documents in knowledge_base/ for relevant passages.
@@ -268,14 +257,14 @@ def handle_knowledge_query(query: str) -> dict:
         }
 
     # Route through LLM router for synthesis
-    return _llm_rag_response(query, relevant_passages)
+    return _llm_rag_response(query, relevant_passages, context_engine, llm_router)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. LLM INTEGRATION via LLMRouter + Rule-Based Fallback
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _llm_analysis(query: str, data: list, data_context: str) -> dict:
+def _llm_analysis(query: str, data: list, data_context: str, context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
     """
     Send data + query through the LLM router for analytical insights.
     Falls back to rule-based analysis if no LLM provider is available.
@@ -339,7 +328,7 @@ Format your response in a readable way with bullet points where appropriate."""
     return fb
 
 
-def _llm_rag_response(query: str, passages: list[str]) -> dict:
+def _llm_rag_response(query: str, passages: list[str], context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
     """
     Use LLM router to synthesize a natural answer from retrieved passages.
     Falls back to returning raw passages if no LLM is available.
@@ -351,7 +340,7 @@ def _llm_rag_response(query: str, passages: list[str]) -> dict:
 
 {context}
 
-The following are relevant excerpts from official college documents:
+The following are relevant excerpts from sample college documents:
 
 {combined_passages}
 
@@ -377,7 +366,7 @@ If the documents don't fully answer the question, say so."""
         return {
             "answer": result["content"],
             "explanation": (
-                f"Answer synthesized from official college documents using "
+                f"Answer synthesized from sample college documents using "
                 f"{result['provider'].upper()} ({result['model']}). "
                 f"Found {len(passages)} relevant passage(s). "
                 f"Input tokens: {result['token_count']}."
@@ -393,7 +382,7 @@ If the documents don't fully answer the question, say so."""
         "answer": combined,
         "explanation": (
             "No LLM available for synthesis. "
-            "Showing matched passages from college documents based on keyword relevance."
+            "Showing matched passages from sample documents based on keyword relevance."
         ),
         "query_type": "knowledge",
         "data": [],
@@ -562,6 +551,7 @@ def process_query(
     query: str,
     role: str = "student",
     llm_config: Optional[dict] = None,
+    history: Optional[list[dict]] = None,
 ) -> dict:
     """
     Main entry point: process a natural language query through the full pipeline.
@@ -572,22 +562,16 @@ def process_query(
         query:      Natural language query from the user
         role:       User role (student/teacher/admin)
         llm_config: Optional dict to override LLM router settings at runtime.
-                    Keys: openai_api_key, ollama_url, ollama_model, strategy, token_threshold
+                    Keys: openai_api_key, gemini_api_key, ollama_model, strategy, allow_cloud
+        history:    Up to 3 previous exchanges supplied by this client only.
 
     Returns:
         dict with keys: answer, explanation, query_type, data, model_info
     """
-    global llm_router
-
-    # Step 0: Apply runtime LLM config if provided
-    if llm_config:
-        llm_router.update_config(
-            openai_api_key=llm_config.get("openai_api_key"),
-            ollama_url=llm_config.get("ollama_url"),
-            ollama_model=llm_config.get("ollama_model"),
-            strategy=llm_config.get("strategy"),
-            token_threshold=llm_config.get("token_threshold"),
-        )
+    llm_router = get_router(llm_config)
+    context_engine = ContextEngine()
+    for item in (history or [])[-3:]:
+        context_engine.add_to_memory(item["query"], item["response"])
 
     # Step 1: Update context
     context_engine.set_role(role)
@@ -602,9 +586,9 @@ def process_query(
         if "model_info" not in result:
             result["model_info"] = {"provider": "database", "model": "SQLite", "token_count": 0}
     elif query_type == "analytical":
-        result = handle_analytical_query(query)
+        result = handle_analytical_query(query, context_engine, llm_router)
     elif query_type == "knowledge":
-        result = handle_knowledge_query(query)
+        result = handle_knowledge_query(query, context_engine, llm_router)
     else:
         result = {
             "answer": "I'm not sure how to handle that query. Please try rephrasing.",

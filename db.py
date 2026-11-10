@@ -7,7 +7,7 @@ This module handles:
   3. Seeding with 25 sample students and their records
   4. Query helper functions used by the Decision Engine
 
-The database is auto-created and seeded on first import.
+The backend initializes the synthetic database on startup; or run python db.py.
 """
 
 import sqlite3
@@ -76,7 +76,7 @@ def create_tables():
 
 
 # ---------------------------------------------------------------------------
-# Sample Data — 25 students across 4 branches, 4 years
+# Synthetic fixture — invented names and academic records; not institutional data
 # ---------------------------------------------------------------------------
 
 SAMPLE_STUDENTS = [

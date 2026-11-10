@@ -5,8 +5,13 @@ Usage: python check_backend.py
 
 import requests
 import sys
+import os
+from dotenv import load_dotenv
 
-BACKEND_URL = "http://localhost:8000"
+load_dotenv()
+HEADERS = {"Authorization": "Bearer " + os.environ["CAMPUS_API_TOKEN"]} if os.getenv("CAMPUS_API_TOKEN") else {}
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 def check_port_8000():
     """Check if port 8000 is in use."""
@@ -19,10 +24,10 @@ def check_port_8000():
 def test_health_endpoint():
     """Test /health endpoint."""
     try:
-        resp = requests.get(f"{BACKEND_URL}/health", timeout=5)
+        resp = requests.get(f"{BACKEND_URL}/health", headers=HEADERS, timeout=5)
         print(f"✅ /health endpoint: {resp.status_code}")
         print(f"   Response: {resp.json()}")
-        return True
+        return resp.status_code == 200
     except requests.exceptions.ConnectionError:
         print("❌ /health endpoint: Connection refused")
         return False
@@ -33,10 +38,10 @@ def test_health_endpoint():
 def test_llm_status():
     """Test /llm-status endpoint."""
     try:
-        resp = requests.get(f"{BACKEND_URL}/llm-status", timeout=30)
+        resp = requests.get(f"{BACKEND_URL}/llm-status", headers=HEADERS, timeout=30)
         print(f"✅ /llm-status endpoint: {resp.status_code}")
         print(f"   Response: {resp.json()}")
-        return True
+        return resp.status_code == 200
     except requests.exceptions.ReadTimeout:
         print("⏱️ /llm-status endpoint: Timeout (LLM initializing?)")
         return False
@@ -53,7 +58,7 @@ def main():
     if not check_port_8000():
         print("❌ Port 8000 is not open!")
         print("\n🔧 Fix: Start the backend with:")
-        print("   uvicorn main:app --reload --host 0.0.0.0 --port 8000")
+        print("   uvicorn main:app --host 127.0.0.1 --port 8000")
         sys.exit(1)
     else:
         print("✅ Port 8000 is open")
