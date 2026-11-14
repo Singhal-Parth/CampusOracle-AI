@@ -49,7 +49,7 @@ class LLMRouter:
         if self.strategy == "offline":
             return False
         try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=3)
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=3, allow_redirects=False)
             return response.status_code == 200
         except requests.RequestException:
             return False
@@ -64,7 +64,8 @@ class LLMRouter:
     def get_status(self) -> dict:
         return {
             "strategy": self.strategy, "cloud_allowed": self.allow_cloud,
-            "openai_configured": self.check_openai(), "gemini_configured": self.check_gemini(),
+            "openai_configured": bool(self.openai_api_key),
+            "gemini_configured": bool(self.gemini_api_key and self.gemini_model),
             "ollama_model": self.ollama_model, "token_threshold": self.token_threshold,
         }
 
@@ -99,9 +100,10 @@ class LLMRouter:
                         f"{self.ollama_url}/api/chat",
                         json={"model": self.ollama_model, "messages": messages, "stream": False,
                               "options": {"temperature": temperature, "num_predict": max_tokens}},
-                        timeout=(3, 20),
+                        timeout=(3, 20), allow_redirects=False,
                     )
-                    response.raise_for_status()
+                    if not 200 <= response.status_code < 300:
+                        continue
                     content = response.json().get("message", {}).get("content", "")
                     model = self.ollama_model
                 elif provider == "openai":
@@ -130,9 +132,10 @@ class LLMRouter:
                     }
                     response = requests.post(
                         f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent",
-                        headers={"x-goog-api-key": self.gemini_api_key}, json=payload, timeout=(3, 20),
+                        headers={"x-goog-api-key": self.gemini_api_key}, json=payload, timeout=(3, 20), allow_redirects=False,
                     )
-                    response.raise_for_status()
+                    if not 200 <= response.status_code < 300:
+                        continue
                     parts = response.json()["candidates"][0]["content"]["parts"]
                     content = "".join(part.get("text", "") for part in parts)
                     model = self.gemini_model
@@ -150,8 +153,8 @@ def get_router(config: Optional[dict] = None) -> LLMRouter:
     config = config or {}
     server_cloud = os.getenv("ALLOW_CLOUD_LLM", "false").lower() == "true"
     return LLMRouter(
-        openai_api_key=config.get("openai_api_key") or os.getenv("OPENAI_API_KEY", ""),
-        gemini_api_key=config.get("gemini_api_key") or os.getenv("GEMINI_API_KEY", ""),
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
         # Only the operator configures network destinations; clients cannot override them.
         ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=config.get("ollama_model") or os.getenv("OLLAMA_MODEL", "llama3.2:3b"),

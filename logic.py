@@ -5,16 +5,16 @@ This module is the brain of the AI College Data Assistant. It contains:
   1. Context Engine  -- manages user role & session memory (last 3 queries)
   2. Decision Engine  -- classifies queries and routes to the right handler
   3. LLM Integration  -- Request-local OpenAI / Gemini / Ollama / offline routing
-  4. RAG Simulation   -- keyword-based document retrieval from static files
+  4. Policy Search    -- ranked document retrieval with section references
 
 Flow: User Query -> Context Engine -> Decision Engine -> Response
 """
 
-import os
 import re
 from typing import Optional
 from dotenv import load_dotenv
 
+import policy_search
 import db  # Our database module
 from llm_router import get_router, LLMRouter  # Intelligent LLM routing
 
@@ -106,19 +106,23 @@ def classify_query(query: str) -> str:
     Classify a user query into one of three categories:
       - 'data'       → Direct database query (SQL)
       - 'analytical'  → Needs LLM/rule-based analysis
-      - 'knowledge'   → RAG simulation from static documents
+      - 'knowledge'   → Ranked lookup in sample documents
 
     Classification uses keyword matching with priority:
-    analytical > knowledge > data (fallback to data if ambiguous)
+    specific policy phrases > analytical > knowledge > data
     """
     query_lower = query.lower()
 
-    # Check analytical first (higher priority — these need deeper processing)
+    # "Improvement exam" refers to a policy, even though "improve" signals analysis.
+    if "improvement exam" in query_lower:
+        return "knowledge"
+
+    # Check analytical before generic knowledge terms.
     if any(kw in query_lower for kw in ANALYTICAL_KEYWORDS):
         return "analytical"
 
     # Check knowledge queries
-    if any(kw in query_lower for kw in KNOWLEDGE_KEYWORDS):
+    if any(re.search(rf"\b{re.escape(kw)}\b", query_lower) for kw in KNOWLEDGE_KEYWORDS):
         return "knowledge"
 
     # Default: treat as data query (most common case)
@@ -238,26 +242,19 @@ def handle_analytical_query(query: str, context_engine: ContextEngine, llm_route
 
 
 def handle_knowledge_query(query: str, context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
-    """
-    Handle knowledge queries using RAG simulation.
-    Searches static documents in knowledge_base/ for relevant passages.
-    """
-    query_lower = query.lower()
-
-    # Load and search knowledge base documents
-    relevant_passages = _search_knowledge_base(query_lower)
-
-    if not relevant_passages:
+    """Retrieve sample passages, then optionally synthesize them."""
+    passages = policy_search.search(query)
+    if not passages:
         return {
-            "answer": "I couldn't find specific information about that in our documents.",
-            "explanation": "Searched college policies and academic guidelines but found no matching content.",
+            "answer": "I couldn't find a matching section in the sample documents.",
+            "explanation": "Searched the sample policies and academic guidelines.",
             "query_type": "knowledge",
             "data": [],
-            "model_info": {"provider": "none", "model": "keyword-search", "token_count": 0},
+            "model_info": {"provider": "none", "model": "SQLite FTS5", "token_count": 0},
         }
 
-    # Route through LLM router for synthesis
-    return _llm_rag_response(query, relevant_passages, context_engine, llm_router)
+    sources = [passage.to_source(i) for i, passage in enumerate(passages, start=1)]
+    return _llm_rag_response(query, sources, context_engine, llm_router)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -328,13 +325,15 @@ Format your response in a readable way with bullet points where appropriate."""
     return fb
 
 
-def _llm_rag_response(query: str, passages: list[str], context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
+def _llm_rag_response(query: str, sources: list[dict], context_engine: ContextEngine, llm_router: LLMRouter) -> dict:
     """
     Use LLM router to synthesize a natural answer from retrieved passages.
     Falls back to returning raw passages if no LLM is available.
     """
     context = context_engine.get_context_summary()
-    combined_passages = "\n\n".join(passages)
+    combined_passages = "\n\n".join(
+        f"[{source['number']}] {source['document']}: {source['excerpt']}" for source in sources
+    )
 
     prompt = f"""You are an AI assistant for a college management system.
 
@@ -346,8 +345,8 @@ The following are relevant excerpts from sample college documents:
 
 User Question: {query}
 
-Please provide a clear, helpful answer based on the above documents.
-If the documents don't fully answer the question, say so."""
+Answer using only these sample excerpts. Cite the relevant excerpt numbers, such as [1].
+If the excerpts don't fully answer the question, say so."""
 
     messages = [
         {"role": "system", "content": "You are a helpful college information assistant."},
@@ -368,25 +367,22 @@ If the documents don't fully answer the question, say so."""
             "explanation": (
                 f"Answer synthesized from sample college documents using "
                 f"{result['provider'].upper()} ({result['model']}). "
-                f"Found {len(passages)} relevant passage(s). "
+                f"Retrieved {len(sources)} sample sections. "
                 f"Input tokens: {result['token_count']}."
             ),
             "query_type": "knowledge",
             "data": [],
+            "sources": sources,
             "model_info": model_info,
         }
 
-    # Fallback: return raw passages
-    combined = "\n\n".join(passages)
     return {
-        "answer": combined,
-        "explanation": (
-            "No LLM available for synthesis. "
-            "Showing matched passages from sample documents based on keyword relevance."
-        ),
+        "answer": "\n\n".join(f"[{source['number']}] {source['excerpt']}" for source in sources),
+        "explanation": "Showing ranked excerpts from the synthetic sample documents.",
         "query_type": "knowledge",
         "data": [],
-        "model_info": {"provider": "fallback", "model": "keyword-search", "token_count": result["token_count"]},
+        "sources": sources,
+        "model_info": {"provider": "fallback", "model": "SQLite FTS5", "token_count": 0},
     }
 
 
@@ -500,51 +496,7 @@ def _rule_based_analysis(query: str, data: list, data_context: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. RAG SIMULATION — Knowledge Base Search
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _search_knowledge_base(query: str) -> list[str]:
-    """
-    Search static documents in knowledge_base/ for passages matching
-    the query keywords. Returns a list of relevant text passages.
-    """
-    kb_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge_base")
-    relevant_passages = []
-
-    if not os.path.exists(kb_dir):
-        return relevant_passages
-
-    # Read all .txt files in knowledge_base/
-    for filename in os.listdir(kb_dir):
-        if not filename.endswith(".txt"):
-            continue
-
-        filepath = os.path.join(kb_dir, filename)
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # Split into sections (using numbered headers like "1.", "2.", etc.)
-        sections = re.split(r'\n(?=\d+\.\s+[A-Z])', content)
-
-        # Score each section by keyword overlap with the query
-        query_words = set(query.lower().split())
-        for section in sections:
-            section_lower = section.lower()
-            # Count how many query words appear in this section
-            matches = sum(1 for word in query_words if word in section_lower)
-            # Require at least 2 matching words (or 1 for short queries)
-            threshold = 1 if len(query_words) <= 3 else 2
-            if matches >= threshold:
-                # Clean up the section text
-                cleaned = section.strip()
-                if cleaned and len(cleaned) > 20:
-                    relevant_passages.append(cleaned)
-
-    return relevant_passages
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 6. MAIN PROCESSING FUNCTION — Entry point for all queries
+# 5. MAIN PROCESSING FUNCTION — Entry point for all queries
 # ═══════════════════════════════════════════════════════════════════════════
 
 def process_query(
@@ -562,7 +514,7 @@ def process_query(
         query:      Natural language query from the user
         role:       User role (student/teacher/admin)
         llm_config: Optional dict to override LLM router settings at runtime.
-                    Keys: openai_api_key, gemini_api_key, ollama_model, strategy, allow_cloud
+                    Keys: ollama_model, strategy, allow_cloud
         history:    Up to 3 previous exchanges supplied by this client only.
 
     Returns:
@@ -605,7 +557,7 @@ def process_query(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. UTILITY FUNCTIONS
+# 6. UTILITY FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _extract_number(text: str, default: float = 60.0) -> float:

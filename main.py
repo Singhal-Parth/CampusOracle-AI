@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CampusOracle AI — synthetic-data demo",
-    description="Local prototype: SQL queries, rule-based analytics, and keyword document lookup.",
+    description="Local prototype: SQL queries, rule-based analytics, and ranked policy search.",
     version="1.1.0", lifespan=lifespan, dependencies=[Depends(require_access)],
     # The Streamlit server calls this API directly; browser CORS is unnecessary.
     docs_url=None, redoc_url=None, openapi_url=None,
@@ -55,8 +55,6 @@ class HistoryItem(BaseModel):
 
 class LLMConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    openai_api_key: str | None = Field(default=None, max_length=512, repr=False)
-    gemini_api_key: str | None = Field(default=None, max_length=512, repr=False)
     ollama_model: str | None = Field(default=None, max_length=200)
     strategy: Literal["offline", "auto", "always_ollama", "always_openai", "always_gemini"] | None = None
     allow_cloud: bool = False
@@ -71,18 +69,28 @@ class QueryRequest(BaseModel):
     history: list[HistoryItem] = Field(default_factory=list, max_length=3)
 
 
+class PolicySource(BaseModel):
+    number: int
+    document: str
+    section: str
+    start_line: int
+    end_line: int
+    excerpt: str
+
+
 class QueryResponse(BaseModel):
     answer: str
     explanation: str
     query_type: str
     data: list = Field(default_factory=list)
+    sources: list[PolicySource] = Field(default_factory=list)
     model_info: dict | None = None
     error: bool = False
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_error(request: Request, exc: RequestValidationError):
-    # Default validation errors echo input, which could include a provider key.
+    # Default validation errors echo input, which could include private query text.
     return JSONResponse(status_code=422, content={"detail": "Invalid request fields or values"})
 
 

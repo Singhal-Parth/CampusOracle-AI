@@ -15,9 +15,9 @@ This is a portfolio prototype, not an institutional deployment. Names and academ
 | Identify weak students and suggest improvements | Attendance below 60% **or** average marks below 50%; deterministic advice or opt-in LLM |
 | Analyze performance of CSE 3rd year students | Filtered database records with analysis |
 | Who are the top performers? | Ranking by average marks |
-| What is the minimum attendance policy? | Keyword matching over sample text, optionally synthesized by an LLM |
+| What is the minimum attendance policy? | Ranked sample-policy excerpts with filenames and line references, optionally synthesized by an LLM |
 
-The project uses keyword classification and document retrieval. It does not implement vector search, autonomous multi-agent orchestration, unrestricted text-to-SQL, or institutional RBAC. See [architecture and limitations](docs/architecture.md).
+The policy search requires SQLite with FTS5 enabled. The project uses keyword classification and [SQLite FTS5 BM25 ranking](https://sqlite.org/fts5.html#the_bm25_function). Policy answers link their evidence to up to three numbered sample sections in the API and chat. It does not implement vector search, autonomous multi-agent orchestration, unrestricted text-to-SQL, or institutional RBAC. See [architecture and limitations](docs/architecture.md).
 
 ## Run locally
 
@@ -60,10 +60,10 @@ For Ollama, install it separately, pull the model you choose, configure `OLLAMA_
 For cloud use:
 
 1. Set `ALLOW_CLOUD_LLM=true` in the backend's `.env` and configure the desired key and model. Restart the backend after changes.
-2. Open **LLM Configuration**, choose a cloud-capable mode, and explicitly check **Allow cloud processing for this session**. You may provide your own key in this session instead of the operator's key.
+2. Open **LLM Configuration**, choose a cloud-capable mode, and explicitly check **Allow cloud processing for this session**. The backend reads provider keys from its environment. API clients must omit legacy `openai_api_key` and `gemini_api_key` fields from `llm_config`.
 3. Queries, the last three exchanges, selected student records, and matched policy passages may then be sent to the selected provider. Do not enter private records or secrets in chat.
 
-`GEMINI_MODEL` must be set to a model available to your Google project. Gemini uses the [official generateContent REST API](https://ai.google.dev/api/generate-content) through `requests`, with a request-local key; no Gemini SDK is required. OpenAI uses its Python client. Configured keys are not proof that a model is available or credentials are valid. Cloud providers have not been live-tested as part of the offline regression suite.
+`GEMINI_MODEL` must be set to a model available to your Google project. Gemini uses the [official generateContent REST API](https://ai.google.dev/api/generate-content) through `requests`, with a backend-only key; no Gemini SDK is required. OpenAI uses its Python client. Configured keys are not proof that a model is available or credentials are valid. Cloud providers have not been live-tested as part of the offline regression suite.
 
 Never commit `.env`. If a key was previously published, **revoke/rotate it at the provider**, review usage, and follow [the incident cleanup instructions](docs/maintainer-cleanup.md). Removing a file does not revoke a key or erase old commits.
 
@@ -84,7 +84,7 @@ python scripts/scan_secrets.py
 python check_backend.py
 ```
 
-Tests use temporary databases and mocked providers. They cover all six example queries, idempotent fixture creation, concurrent history isolation, request-local keys, cloud consent, local-only routing, bounded retries, redacted errors, and API access controls. `check_backend.py` requires the backend to be running. `test_router.py` is a manual diagnostic, not the regression suite; it never receives environment keys.
+Tests use temporary databases and mocked providers. They cover all six example queries, idempotent fixture creation, concurrent history isolation, backend-only keys, ranked policy results and exact source ranges, cloud consent, local-only routing, bounded retries, redacted errors, and API access controls. `check_backend.py` requires the backend to be running. `test_router.py` is a manual diagnostic, not the regression suite; it never receives environment keys.
 
 Runtime and development dependency graphs are pinned in `requirements.txt` and `requirements-dev.txt`. To update them intentionally on Python 3.12:
 
@@ -99,9 +99,10 @@ python -m piptools compile --upgrade --output-file requirements-dev.txt requirem
 |---|---|
 | `app.py` | Streamlit interface and client-owned history |
 | `main.py` | Validated API, access checks, generic errors |
-| `logic.py` | Keyword classification, predefined query handlers, analysis and retrieval |
+| `logic.py` | Keyword classification, predefined query handlers and analysis |
 | `llm_router.py` | Request-local, consent-aware provider routing |
 | `db.py` | SQLite schema, invented fixtures, parameterized query helpers |
+| `policy_search.py` | SQLite FTS5 ranking and exact sample-document excerpts |
 | `knowledge_base/` | Clearly labeled sample documents |
 | `tests/` | Offline regression tests |
 | `docs/` | Architecture, demo evidence, maintainer notes |
