@@ -82,6 +82,7 @@ Actual response:
       "percentage": 58.4
     }
   ],
+  "sources": [],
   "model_info": {
     "provider": "database",
     "model": "SQLite",
@@ -129,6 +130,7 @@ Actual response:
       "avg_marks": 41.7
     }
   ],
+  "sources": [],
   "model_info": {
     "provider": "fallback",
     "model": "rule-based",
@@ -155,14 +157,40 @@ Actual response:
 
 ```json
 {
-  "answer": "1. ATTENDANCE POLICY\n--------------------\n- Minimum required attendance: 75% per semester.\n- Students with attendance below 75% will receive a warning notice.\n- Students with attendance below 60% will be marked as \"detained\" and may\n  not be allowed to sit for end-semester examinations.\n- Medical leave of up to 10 days per semester is allowed with valid\n  documentation from a registered medical practitioner.\n- Students with attendance between 60-75% may apply for condonation with\n  a fine of Rs. 500 per subject.\n\n2. EXAMINATION ELIGIBILITY\n--------------------------\n- Students must have a minimum of 75% attendance to be eligible for\n  end-semester examinations.\n- Students must have submitted all mandatory assignments and lab work.\n- Students with pending disciplinary actions may be barred from exams.\n- Re-examination is allowed once per subject per semester with a fee of\n  Rs. 1000.\n\n2. REMEDIAL CLASSES\n-------------------\n- Remedial classes are offered for students scoring below 50% in any subject.\n- Schedule: Extra classes held on Saturdays, 10 AM — 1 PM.\n- Attendance in remedial classes is mandatory for eligible students.\n- Topics covered: Fundamentals review, problem-solving workshops, and\n  doubt-clearing sessions.\n- Faculty mentors are assigned to each weak student for personalized guidance.\n\n3. IMPROVEMENT EXAMINATIONS\n----------------------------\n- Students who have passed but wish to improve their grades may appear for\n  improvement exams in the subsequent semester.\n- Maximum of 3 subjects can be attempted for improvement per semester.\n- The better of the two scores (original or improvement) will be considered.\n- Fee for improvement exam: Rs. 500 per subject.\n\n4. WEAK STUDENT IDENTIFICATION CRITERIA\n----------------------------------------\n- A student is classified as \"academically weak\" if:\n  * Average marks across all subjects < 50%, OR\n  * Attendance percentage < 60%, OR\n  * Failed in 2 or more subjects in a single semester.\n- Interventions for weak students:\n  * Mandatory remedial classes\n  * Bi-weekly mentor meetings\n  * Peer tutoring program (pairing with high performers)\n  * Progress tracking with monthly reports to parents/guardians\n\n5. SUGGESTIONS FOR IMPROVEMENT\n-------------------------------\n- Regular study schedule: Minimum 2 hours of self-study daily.\n- Active participation in class discussions and group projects.\n- Utilize college resources: library, online databases, lab facilities.\n- Seek help early: approach faculty during office hours for doubts.\n- Form study groups with classmates for collaborative learning.\n- Practice previous years' question papers for exam preparation.\n- Maintain a healthy work-life balance: exercise, sleep, nutrition.\n\n6. BRANCH-SPECIFIC GUIDELINES\n------------------------------\n- CSE: Focus on programming practice (minimum 2 coding problems/day).\n  Participate in hackathons and open-source contributions.\n- ECE: Emphasize lab work and circuit design projects. Join electronics\n  clubs for hands-on experience.\n- ME: Focus on workshop skills and CAD software proficiency. Participate\n  in design competitions and internships.\n- CE: Emphasize site visits and practical knowledge. Study building codes\n  and structural analysis thoroughly.\n\n7. MENTORSHIP PROGRAM\n---------------------\n- Every student is assigned a faculty mentor at the start of each year.\n- Mentor meetings: At least once per month (mandatory).\n- Mentors track academic progress, attendance, and overall well-being.\n- Students can request a change of mentor through the Dean's office.",
-  "explanation": "No LLM available for synthesis. Showing matched passages from sample documents based on keyword relevance.",
+  "answer": "[1] 1. ATTENDANCE POLICY\n--------------------\n- Minimum required attendance: 75% per semester.\n- Students with attendance below 75% will receive a warning notice.\n- Students with attendance below 60% will be marked as \"detained\" and may\n  not be allowed to sit for end-semester examinations.\n- Medical leave of up to 10 days per semester is allowed with valid\n  documentation from a registered medical practitioner.\n- Students with attendance between 60-75% may apply for condonation with\n  a fine of Rs. 500 per subject.\n\n[2] 1. ACADEMIC PERFORMANCE STANDARDS\n---------------------------------\n- Students are expected to maintain a minimum CGPA of 5.0 (on 10-point scale).\n- Students falling below CGPA 5.0 for two consecutive semesters will be\n  placed on academic probation.\n- Students on academic probation must attend mandatory counselling sessions.\n\n[3] 2. EXAMINATION ELIGIBILITY\n--------------------------\n- Students must have a minimum of 75% attendance to be eligible for\n  end-semester examinations.\n- Students must have submitted all mandatory assignments and lab work.\n- Students with pending disciplinary actions may be barred from exams.\n- Re-examination is allowed once per subject per semester with a fee of\n  Rs. 1000.",
+  "explanation": "Showing ranked excerpts from the synthetic sample documents.",
   "query_type": "knowledge",
   "data": [],
+  "sources": [
+    {
+      "number": 1,
+      "document": "policies.txt",
+      "section": "ATTENDANCE POLICY",
+      "start_line": 7,
+      "end_line": 16,
+      "excerpt": "1. ATTENDANCE POLICY\n--------------------\n- Minimum required attendance: 75% per semester.\n- Students with attendance below 75% will receive a warning notice.\n- Students with attendance below 60% will be marked as \"detained\" and may\n  not be allowed to sit for end-semester examinations.\n- Medical leave of up to 10 days per semester is allowed with valid\n  documentation from a registered medical practitioner.\n- Students with attendance between 60-75% may apply for condonation with\n  a fine of Rs. 500 per subject."
+    },
+    {
+      "number": 2,
+      "document": "guidelines.txt",
+      "section": "ACADEMIC PERFORMANCE STANDARDS",
+      "start_line": 7,
+      "end_line": 12,
+      "excerpt": "1. ACADEMIC PERFORMANCE STANDARDS\n---------------------------------\n- Students are expected to maintain a minimum CGPA of 5.0 (on 10-point scale).\n- Students falling below CGPA 5.0 for two consecutive semesters will be\n  placed on academic probation.\n- Students on academic probation must attend mandatory counselling sessions."
+    },
+    {
+      "number": 3,
+      "document": "policies.txt",
+      "section": "EXAMINATION ELIGIBILITY",
+      "start_line": 18,
+      "end_line": 25,
+      "excerpt": "2. EXAMINATION ELIGIBILITY\n--------------------------\n- Students must have a minimum of 75% attendance to be eligible for\n  end-semester examinations.\n- Students must have submitted all mandatory assignments and lab work.\n- Students with pending disciplinary actions may be barred from exams.\n- Re-examination is allowed once per subject per semester with a fee of\n  Rs. 1000."
+    }
+  ],
   "model_info": {
     "provider": "fallback",
-    "model": "keyword-search",
-    "token_count": 983
+    "model": "SQLite FTS5",
+    "token_count": 0
   },
   "error": false
 }

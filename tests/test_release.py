@@ -87,12 +87,14 @@ def test_cloud_requires_both_operator_and_request_consent(monkeypatch):
     assert llm_router.get_router({"allow_cloud": True}).check_openai()
 
 
-def test_router_keys_and_settings_are_not_shared(monkeypatch):
+def test_router_uses_only_backend_keys_and_isolates_settings(monkeypatch):
     monkeypatch.setenv("ALLOW_CLOUD_LLM", "true")
-    a = llm_router.get_router({"openai_api_key": "session-a", "strategy": "auto", "allow_cloud": True})
+    monkeypatch.setenv("OPENAI_API_KEY", "operator-key")
+    a = llm_router.get_router({"openai_api_key": "client-key", "strategy": "auto", "allow_cloud": True})
     b = llm_router.get_router()
-    assert a.openai_api_key == "session-a"
-    assert b.openai_api_key == "" and b.strategy == "offline" and not b.allow_cloud
+    assert a.openai_api_key == b.openai_api_key == "operator-key"
+    assert a.strategy == "auto" and a.allow_cloud
+    assert b.strategy == "offline" and not b.allow_cloud
 
 
 def test_always_ollama_cannot_fall_back_to_cloud(monkeypatch):
@@ -115,15 +117,18 @@ def test_provider_failures_have_bounded_retries_and_redacted_errors(monkeypatch)
     assert "sensitive" not in str(result)
 
 
-def test_gemini_rest_request_uses_request_local_key(monkeypatch):
-    response = Mock()
+def test_gemini_rest_request_uses_backend_key(monkeypatch):
+    response = Mock(status_code=200)
     response.json.return_value = {"candidates": [{"content": {"parts": [{"text": "answer"}]}}]}
     post = Mock(return_value=response)
     monkeypatch.setattr(llm_router.requests, "post", post)
-    router = llm_router.LLMRouter(gemini_api_key="request-local-key", gemini_model="demo-model",
-                                  strategy="always_gemini", allow_cloud=True)
+    monkeypatch.setenv("GEMINI_API_KEY", "backend-key")
+    monkeypatch.setenv("GEMINI_MODEL", "demo-model")
+    monkeypatch.setenv("ALLOW_CLOUD_LLM", "true")
+    router = llm_router.get_router({"strategy": "always_gemini", "allow_cloud": True})
     assert router.chat([{"role": "user", "content": "hello"}])["content"] == "answer"
-    assert post.call_args.kwargs["headers"] == {"x-goog-api-key": "request-local-key"}
+    assert post.call_args.kwargs["headers"] == {"x-goog-api-key": "backend-key"}
+    assert post.call_args.kwargs["allow_redirects"] is False
     assert "key=" not in post.call_args.args[0]
 
 
@@ -132,8 +137,24 @@ def test_rejects_request_supplied_network_destination(client):
     assert response.status_code == 422
 
 
+@pytest.mark.parametrize("field", ["openai_api_key", "gemini_api_key"])
+def test_api_rejects_request_credentials_without_echoing_them(client, field):
+    response = client.post("/query", json={"query": "hi", "llm_config": {field: "PRIVATE"}})
+    assert response.status_code == 422 and "PRIVATE" not in response.text
+
+
+def test_status_exposes_configuration_without_exposing_keys_or_making_calls(client, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "PRIVATE")
+    monkeypatch.setenv("GEMINI_MODEL", "demo-model")
+    response = client.get("/llm-status")
+    assert response.status_code == 200
+    assert response.json()["gemini_configured"] is True
+    assert response.json()["cloud_enabled_by_operator"] is False
+    assert "PRIVATE" not in response.text
+
+
 def test_api_errors_do_not_echo_inputs(client, monkeypatch):
-    response = client.post("/query", json={"query": "hi", "llm_config": {"openai_api_key": "PRIVATE", "strategy": "invalid"}})
+    response = client.post("/query", json={"query": "PRIVATE", "llm_config": {"strategy": "invalid"}})
     assert response.status_code == 422 and "PRIVATE" not in response.text
     def fail(**kwargs):
         raise RuntimeError("PRIVATE")
@@ -173,3 +194,56 @@ def test_offline_mode_never_contacts_providers(monkeypatch):
     router.get_status()
     post.assert_not_called()
     get.assert_not_called()
+
+
+@pytest.mark.parametrize("query,top_section", [
+    ("What is the minimum attendance policy?", "ATTENDANCE POLICY"),
+    ("What is the library policy for borrowing books?", "LIBRARY POLICY"),
+    ("How much is the fee for improvement exams?", "IMPROVEMENT EXAMINATIONS"),
+    ("What are the scholarship guidelines?", "FEE POLICY"),
+    ("Who qualifies for remedial classes?", "REMEDIAL CLASSES"),
+    ("How do I change my mentor under the mentorship program?", "MENTORSHIP PROGRAM"),
+    ("What is the grading policy?", "GRADING POLICY"),
+    ("What is the policy on mobile phones during lectures?", "DISCIPLINARY POLICY"),
+])
+def test_policy_results_rank_relevant_sections_and_return_exact_sources(client, query, top_section):
+    from policy_search import KNOWLEDGE_BASE
+
+    response = client.post("/query", json={"query": query})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["query_type"] == "knowledge"
+    sources = result["sources"]
+    assert 1 <= len(sources) <= 3
+    assert sources[0]["section"] == top_section
+    for number, source in enumerate(sources, start=1):
+        assert source["number"] == number
+        assert f"[{number}] {source['excerpt']}" in result["answer"]
+        lines = (KNOWLEDGE_BASE / source["document"]).read_text(encoding="utf-8").splitlines()
+        assert source["excerpt"] == "\n".join(lines[source["start_line"] - 1:source["end_line"]])
+
+
+@pytest.mark.parametrize("query", ["What is the drone policy?", "What are the policies?"])
+def test_policy_no_match_returns_no_sources(client, query):
+    result = client.post("/query", json={"query": query}).json()
+    assert result["query_type"] == "knowledge"
+    assert result["sources"] == []
+    assert "couldn't find a matching section" in result["answer"]
+
+
+def test_provider_synthesis_uses_the_same_numbering_exposed_by_api(client, monkeypatch):
+    chat = Mock(return_value={"content": "Four books [1].", "provider": "ollama",
+                              "model": "test", "token_count": 10})
+    monkeypatch.setattr(llm_router.LLMRouter, "chat", chat)
+    result = client.post("/query", json={"query": "What is the library policy?"}).json()
+    assert result["answer"] == "Four books [1]."
+    source = result["sources"][0]
+    assert source["section"] == "LIBRARY POLICY"
+    assert f"[1] {source['document']}: {source['excerpt']}" in chat.call_args.args[0][-1]["content"]
+
+
+def test_policy_search_treats_punctuation_as_text(client):
+    text = 'What is the library policy? " ) OR * :'
+    response = client.post("/query", json={"query": text})
+    assert response.status_code == 200
+    assert response.json()["sources"][0]["section"] == "LIBRARY POLICY"

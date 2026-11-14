@@ -32,7 +32,7 @@ st.set_page_config(
 def check_backend_health():
     """Check if backend is reachable."""
     try:
-        resp = requests.get(f"{BACKEND_URL}/health", headers=HEADERS, timeout=5)
+        resp = requests.get(f"{BACKEND_URL}/health", headers=HEADERS, timeout=5, allow_redirects=False)
         return resp.status_code == 200
     except:
         return False
@@ -40,7 +40,7 @@ def check_backend_health():
 def get_llm_status_safe():
     """Get LLM status with proper error handling."""
     try:
-        resp = requests.get(f"{BACKEND_URL}/llm-status", headers=HEADERS, timeout=TIMEOUT)
+        resp = requests.get(f"{BACKEND_URL}/llm-status", headers=HEADERS, timeout=5, allow_redirects=False)
         if resp.status_code == 200:
             return resp.json()
         else:
@@ -49,8 +49,8 @@ def get_llm_status_safe():
         return {"error": "Backend not running. Start with: uvicorn main:app --reload"}
     except requests.exceptions.ReadTimeout:
         return {"error": "Backend is slow. LLM might be initializing..."}
-    except Exception as e:
-        return {"error": str(e)}
+    except (requests.RequestException, ValueError):
+        return {"error": "Unable to read provider status."}
 
 # ---------------------------------------------------------------------------
 # Startup Check
@@ -199,10 +199,6 @@ if "role" not in st.session_state:
     st.session_state.role = "student"
 
 # LLM configuration defaults
-if "openai_api_key" not in st.session_state:
-    st.session_state.openai_api_key = ""
-if "gemini_api_key" not in st.session_state:
-    st.session_state.gemini_api_key = ""
 if "ollama_model" not in st.session_state:
     st.session_state.ollama_model = "llama3.2:3b"
 if "llm_strategy" not in st.session_state:
@@ -223,8 +219,6 @@ def get_llm_config() -> dict:
         "Always Gemini": "always_gemini",
     }
     return {
-        "openai_api_key": st.session_state.openai_api_key or None,
-        "gemini_api_key": st.session_state.gemini_api_key or None,
         "ollama_model": st.session_state.ollama_model,
         "strategy": strategy_map.get(st.session_state.llm_strategy, "offline"),
         "allow_cloud": st.session_state.get("allow_cloud", False),
@@ -251,6 +245,8 @@ def render_model_badge(model_info: dict):
         badge_html = f'<span class="model-badge model-openai">&#129302; via OpenAI {model}</span>'
     elif provider == "gemini":
         badge_html = f'<span class="model-badge" style="background:#e8f0fe; color:#1967d2;">&#10024; via Gemini {model}</span>'
+    elif model == "SQLite FTS5":
+        badge_html = '<span class="model-badge model-database">Sample document search</span>'
     elif provider == "database":
         badge_html = f'<span class="model-badge model-database">&#128451; Direct SQL Query</span>'
     else:
@@ -288,27 +284,8 @@ with st.sidebar:
     with st.expander("🤖 LLM Configuration", expanded=False):
         st.caption("Configure how the AI backend processes analytical queries.")
 
-        # OpenAI API Key
-        openai_key = st.text_input(
-            "OpenAI API Key",
-            value=st.session_state.openai_api_key,
-            type="password",
-            placeholder="sk-...",
-            help="Optional. Get from https://platform.openai.com/api-keys",
-        )
-        st.session_state.openai_api_key = openai_key
+        st.caption("Provider keys and Ollama's address are configured on the backend.")
 
-        # Gemini API Key
-        gemini_key = st.text_input(
-            "Gemini API Key",
-            value=st.session_state.gemini_api_key,
-            type="password",
-            placeholder="AIzaSy...",
-            help="Optional. Get from Google AI Studio",
-        )
-        st.session_state.gemini_api_key = gemini_key
-
-        st.caption("Ollama's address is configured by the backend operator.")
         st.checkbox(
             "Allow cloud processing for this session", key="allow_cloud", value=False,
             help="Permits sending your query, recent chat, and sample records to OpenAI/Gemini. "
@@ -348,7 +325,9 @@ with st.sidebar:
         else:
             st.caption("Cloud enabled by operator: " +
                        ("yes" if status.get("cloud_enabled_by_operator") else "no"))
-            st.caption("Provider keys are checked only when you send a query.")
+            for label, field in (("OpenAI", "openai_configured"), ("Gemini", "gemini_configured")):
+                configured = "configured" if status.get(field) else "unconfigured"
+                st.caption(f"{label}: {configured}")
 
         st.info(
             "Offline uses deterministic rules. Always Ollama stays local. "
@@ -414,6 +393,28 @@ st.markdown("""
 # Chat History Display
 # ---------------------------------------------------------------------------
 
+def render_answer_details(result: dict):
+    query_type = escape(str(result.get("query_type", "unknown")))
+    st.markdown(
+        f'<span class="query-badge badge-{query_type}">{query_type}</span>',
+        unsafe_allow_html=True,
+    )
+    render_model_badge(result.get("model_info"))
+    with st.expander("Why this result?"):
+        st.info(result.get("explanation", "No explanation available."))
+    if result.get("sources"):
+        with st.expander("Sources from sample documents"):
+            for source in result["sources"]:
+                st.text(
+                    f"[{source['number']}] {source['section']} · {source['document']} "
+                    f"· lines {source['start_line']}–{source['end_line']}"
+                )
+                st.text(source["excerpt"])
+    if result.get("data"):
+        with st.expander("View Data Table"):
+            st.dataframe(pd.DataFrame(result["data"]), width="stretch", hide_index=True)
+
+
 for message in st.session_state.messages:
     if message.get("error"):
         with st.chat_message("assistant"):
@@ -427,26 +428,7 @@ for message in st.session_state.messages:
         if message["role"] == "assistant" and "extra" in message:
             extra = message["extra"]
 
-            # Query type badge
-            badge_class = f"badge-{extra.get('query_type', 'data')}"
-            st.markdown(
-                f'<span class="query-badge {badge_class}">{extra.get("query_type", "unknown")}</span>',
-                unsafe_allow_html=True
-            )
-
-            # Model info badge
-            render_model_badge(extra.get("model_info"))
-
-            # Explanation (collapsible)
-            with st.expander("Why this result?", expanded=False):
-                st.info(extra.get("explanation", "No explanation available."))
-
-            # Data table
-            if extra.get("data") and len(extra["data"]) > 0:
-                with st.expander("View Data Table", expanded=False):
-                    df = pd.DataFrame(extra["data"])
-                    st.dataframe(df, width="stretch", hide_index=True)
-
+            render_answer_details(extra)
 
 # ---------------------------------------------------------------------------
 # Query Input & Processing
@@ -483,7 +465,8 @@ def send_query(query: str):
                         "history": history[-3:],
                     },
                     headers=HEADERS,
-                    timeout=TIMEOUT
+                    timeout=TIMEOUT,
+                    allow_redirects=False,
                 )
 
                 if resp.status_code == 200:
@@ -492,7 +475,7 @@ def send_query(query: str):
                     response_data = {
                         "answer": f"Error: Backend returned {resp.status_code}",
                         "error": True,
-                        "error_details": resp.text
+                        "error_details": f"HTTP {resp.status_code}"
                     }
             except requests.exceptions.ConnectionError:
                 response_data = {
@@ -506,11 +489,11 @@ def send_query(query: str):
                     "error": True,
                     "error_details": "ReadTimeout"
                 }
-            except Exception as e:
+            except (requests.RequestException, ValueError):
                 response_data = {
-                    "answer": f"❌ Unexpected error: {str(e)}",
+                    "answer": "Unable to read the backend response.",
                     "error": True,
-                    "error_details": str(e)
+                    "error_details": "Backend response unavailable",
                 }
         
         if response_data.get("error"):
@@ -536,38 +519,13 @@ Troubleshooting:
         else:
             st.markdown(response_data["answer"])
             
-            # Query type badge
-            badge_class = f"badge-{response_data.get('query_type', 'data')}"
-            st.markdown(
-                f'<span class="query-badge {badge_class}">{response_data.get("query_type", "unknown")}</span>',
-                unsafe_allow_html=True
-            )
-
-            # Model info badge
-            model_info = response_data.get("model_info")
-            render_model_badge(model_info)
-
-            # Explanation
-            with st.expander("Why this result?", expanded=False):
-                st.info(response_data.get("explanation", "No explanation available."))
-
-            # Data table
-            if response_data.get("data") and len(response_data["data"]) > 0:
-                with st.expander("View Data Table", expanded=False):
-                    df = pd.DataFrame(response_data["data"])
-                    st.dataframe(df, width="stretch", hide_index=True)
-
-            # Save to session state
+            render_answer_details(response_data)
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": response_data["answer"],
-                "extra": {
-                    "explanation": response_data.get("explanation", ""),
-                    "query_type": response_data.get("query_type", "unknown"),
-                    "data": response_data.get("data", []),
-                    "model_info": model_info,
-                }
+                "extra": response_data,
             })
+
 
 # Handle pending query from example buttons
 if "pending_query" in st.session_state:
