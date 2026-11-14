@@ -1,0 +1,8 @@
+# Runtime dependencies. Gemini uses requests and the official REST API (no SDK).
+fastapi
+uvicorn
+streamlit
+openai
+python-dotenv
+requests
+pandas

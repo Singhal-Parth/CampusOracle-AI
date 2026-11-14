@@ -2,6 +2,10 @@
 app.py -- Streamlit Frontend for AI College Data Assistant
 """
 
+import os
+from html import escape
+
+from dotenv import load_dotenv
 import streamlit as st
 import requests
 import pandas as pd
@@ -11,8 +15,11 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 # FastAPI backend URL
-BACKEND_URL = "http://localhost:8000"
-TIMEOUT = 30  # Increased from 3 to 30 seconds
+load_dotenv()
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+API_TOKEN = os.getenv("CAMPUS_API_TOKEN", "")
+HEADERS = {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
+TIMEOUT = 75  # At most three sequential provider attempts, each with a bounded timeout
 
 # Page config
 st.set_page_config(
@@ -25,7 +32,7 @@ st.set_page_config(
 def check_backend_health():
     """Check if backend is reachable."""
     try:
-        resp = requests.get(f"{BACKEND_URL}/health", timeout=5)
+        resp = requests.get(f"{BACKEND_URL}/health", headers=HEADERS, timeout=5)
         return resp.status_code == 200
     except:
         return False
@@ -33,7 +40,7 @@ def check_backend_health():
 def get_llm_status_safe():
     """Get LLM status with proper error handling."""
     try:
-        resp = requests.get(f"{BACKEND_URL}/llm-status", timeout=TIMEOUT)
+        resp = requests.get(f"{BACKEND_URL}/llm-status", headers=HEADERS, timeout=TIMEOUT)
         if resp.status_code == 200:
             return resp.json()
         else:
@@ -57,7 +64,7 @@ with st.spinner("Connecting to backend..."):
         Please start the FastAPI backend:
         
         ```bash
-        uvicorn main:app --reload --host 0.0.0.0 --port 8000
+        uvicorn main:app --host 127.0.0.1 --port 8000
         ```
         
         Then refresh this page.
@@ -196,12 +203,10 @@ if "openai_api_key" not in st.session_state:
     st.session_state.openai_api_key = ""
 if "gemini_api_key" not in st.session_state:
     st.session_state.gemini_api_key = ""
-if "ollama_url" not in st.session_state:
-    st.session_state.ollama_url = "http://localhost:11434"
 if "ollama_model" not in st.session_state:
     st.session_state.ollama_model = "llama3.2:3b"
 if "llm_strategy" not in st.session_state:
-    st.session_state.llm_strategy = "auto"
+    st.session_state.llm_strategy = "Offline (no provider calls)"
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +216,7 @@ if "llm_strategy" not in st.session_state:
 def get_llm_config() -> dict:
     """Build llm_config dict to send with each query to the backend."""
     strategy_map = {
+        "Offline (no provider calls)": "offline",
         "Auto (smart routing)": "auto",
         "Always Ollama": "always_ollama",
         "Always OpenAI": "always_openai",
@@ -219,9 +225,9 @@ def get_llm_config() -> dict:
     return {
         "openai_api_key": st.session_state.openai_api_key or None,
         "gemini_api_key": st.session_state.gemini_api_key or None,
-        "ollama_url": st.session_state.ollama_url,
         "ollama_model": st.session_state.ollama_model,
-        "strategy": strategy_map.get(st.session_state.llm_strategy, "auto"),
+        "strategy": strategy_map.get(st.session_state.llm_strategy, "offline"),
+        "allow_cloud": st.session_state.get("allow_cloud", False),
     }
 
 
@@ -235,7 +241,7 @@ def render_model_badge(model_info: dict):
         return
 
     provider = model_info.get("provider", "unknown")
-    model = model_info.get("model", "unknown")
+    model = escape(str(model_info.get("model", "unknown")))
     token_count = model_info.get("token_count", 0)
 
     # Choose badge style based on provider
@@ -267,10 +273,10 @@ with st.sidebar:
 
     # Role selector
     role = st.selectbox(
-        "Select Your Role",
+        "Response style (demo)",
         options=["student", "teacher", "admin"],
         index=["student", "teacher", "admin"].index(st.session_state.role),
-        help="Your role affects how the system interprets and responds to queries."
+        help="Demo response context only. This does not authenticate users or restrict data access."
     )
     st.session_state.role = role
 
@@ -302,14 +308,12 @@ with st.sidebar:
         )
         st.session_state.gemini_api_key = gemini_key
 
-        # Ollama URL
-        ollama_url = st.text_input(
-            "Ollama URL",
-            value=st.session_state.ollama_url,
-            placeholder="http://localhost:11434",
-            help="Base URL of your local Ollama server.",
+        st.caption("Ollama's address is configured by the backend operator.")
+        st.checkbox(
+            "Allow cloud processing for this session", key="allow_cloud", value=False,
+            help="Permits sending your query, recent chat, and sample records to OpenAI/Gemini. "
+                 "The backend operator must also enable ALLOW_CLOUD_LLM.",
         )
-        st.session_state.ollama_url = ollama_url
 
         # Ollama Model
         ollama_model = st.text_input(
@@ -321,12 +325,12 @@ with st.sidebar:
         st.session_state.ollama_model = ollama_model
 
         # Routing Strategy
-        strategy_options = ["Auto (smart routing)", "Always Ollama", "Always OpenAI", "Always Gemini"]
+        strategy_options = ["Offline (no provider calls)", "Auto (smart routing)", "Always Ollama", "Always OpenAI", "Always Gemini"]
         strategy = st.radio(
             "Routing Strategy",
             options=strategy_options,
             index=strategy_options.index(st.session_state.llm_strategy) if st.session_state.llm_strategy in strategy_options else 0,
-            help="Auto: queries >1500 tokens go to Gemini/OpenAI, smaller ones to Ollama.",
+            help="Offline makes no provider calls. Always Ollama stays local. Auto may use cloud only with consent.",
         )
         st.session_state.llm_strategy = strategy
 
@@ -342,35 +346,15 @@ with st.sidebar:
         if "error" in status:
             st.error(status["error"])
         else:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if status.get("gemini") or status.get("gemini_ready"):
-                    st.success("🟢 Gemini")
-                elif st.session_state.gemini_api_key:
-                    st.warning("🟡 Key Set")
-                else:
-                    st.error("🔴 Gemini")
-            with col2:
-                if status.get("openai") or status.get("openai_ready"):
-                    st.success("🟢 OpenAI")
-                elif st.session_state.openai_api_key:
-                    st.warning("🟡 Key Set")
-                else:
-                    st.error("🔴 OpenAI")
-            with col3:
-                # Handle both old and new schema
-                if status.get("ollama") or status.get("ollama_ready"):
-                    st.success("🟢 Ollama")
-                else:
-                    st.error("🔴 Ollama")
-            
-            # Active strategy
-            st.caption(f"Strategy: {status.get('strategy', 'auto')} | Threshold: {status.get('token_threshold', 1500)} tokens")
+            st.caption("Cloud enabled by operator: " +
+                       ("yes" if status.get("cloud_enabled_by_operator") else "no"))
+            st.caption("Provider keys are checked only when you send a query.")
 
-        # Tooltip about auto-routing
         st.info(
-            "**Auto-routing:** Queries >1500 tokens automatically use OpenAI "
-            "for better accuracy. Smaller queries use Ollama for speed & privacy."
+            "Offline uses deterministic rules. Always Ollama stays local. "
+            "Auto prefers Ollama for smaller prompts and Gemini/OpenAI for larger ones, "
+            "but cloud calls require both your consent and backend permission. "
+            "Token counts are estimates."
         )
 
     st.divider()
@@ -389,29 +373,19 @@ with st.sidebar:
     ]
 
     for eq in example_queries:
-        if st.button(f"{eq}", key=f"ex_{eq}", use_container_width=True):
+        if st.button(f"{eq}", key=f"ex_{eq}", width="stretch"):
             st.session_state.pending_query = eq
             st.rerun()
 
     st.divider()
 
-    # Session memory display
+    # Conversation history belongs to this Streamlit session; no global API memory.
     st.markdown("## Session Memory")
-    try:
-        mem_response = requests.get(f"{BACKEND_URL}/session-memory", timeout=TIMEOUT)
-        if mem_response.status_code == 200:
-            mem_data = mem_response.json()
-            st.markdown(f"**Role:** {mem_data['role']}")
-            if mem_data["memory"]:
-                for i, m in enumerate(mem_data["memory"], 1):
-                    with st.expander(f"Q{i}: {m['query'][:50]}..."):
-                        st.write(m["response"][:200])
-            else:
-                st.caption("No queries yet in this session.")
-        else:
-            st.caption("Session memory unavailable.")
-    except Exception:
-        st.caption("Backend not connected.")
+    exchanges = [m for m in st.session_state.messages if m["role"] == "assistant" and not m.get("error")]
+    st.caption(f"{min(3, len(exchanges))} recent exchanges available as context in this session.")
+    if st.button("Clear conversation"):
+        st.session_state.messages = []
+        st.rerun()
 
     st.divider()
 
@@ -431,7 +405,7 @@ with st.sidebar:
 st.markdown("""
 <div class="main-header">
     <h1>AI College Data Assistant</h1>
-    <p>Ask questions about student data, performance analytics, or college policies using natural language.</p>
+    <p>Local prototype using synthetic student records and sample policies.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -471,7 +445,7 @@ for message in st.session_state.messages:
             if extra.get("data") and len(extra["data"]) > 0:
                 with st.expander("View Data Table", expanded=False):
                     df = pd.DataFrame(extra["data"])
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.dataframe(df, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +454,15 @@ for message in st.session_state.messages:
 
 def send_query(query: str):
     """Send a query to the backend and update the chat."""
+    # Send only this session's last three completed exchanges.
+    history = []
+    previous_query = None
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            previous_query = message["content"]
+        elif previous_query is not None and not message.get("error"):
+            history.append({"query": previous_query, "response": message["content"][:2000]})
+            previous_query = None
     # Add user message to chat
     st.session_state.messages.append({"role": "user", "content": query})
 
@@ -497,7 +480,9 @@ def send_query(query: str):
                         "query": query,
                         "role": st.session_state.role,
                         "llm_config": get_llm_config(),
+                        "history": history[-3:],
                     },
+                    headers=HEADERS,
                     timeout=TIMEOUT
                 )
 
@@ -570,7 +555,7 @@ Troubleshooting:
             if response_data.get("data") and len(response_data["data"]) > 0:
                 with st.expander("View Data Table", expanded=False):
                     df = pd.DataFrame(response_data["data"])
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.dataframe(df, width="stretch", hide_index=True)
 
             # Save to session state
             st.session_state.messages.append({
